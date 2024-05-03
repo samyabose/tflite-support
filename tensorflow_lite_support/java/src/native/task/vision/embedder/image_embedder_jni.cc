@@ -53,8 +53,8 @@ using ::tflite::task::vision::ImageEmbedder;
 using ::tflite::task::vision::ImageEmbedderOptions;
 
 // Creates an ImageEmbedderOptions proto based on the Java class.
-ImageEmbedderOptions ConvertToProtoOptions(JNIEnv* env, jobject java_options,
-                                            jlong base_options_handle) {
+ImageEmbedderOptions ConvertToProtoOptions(jlong base_options_handle,
+                                           bool l2_normalize, bool quantize) {
   ImageEmbedderOptions proto_options;
 
   if (base_options_handle != kInvalidPointer) {
@@ -62,22 +62,27 @@ ImageEmbedderOptions ConvertToProtoOptions(JNIEnv* env, jobject java_options,
     proto_options.set_allocated_base_options(
         reinterpret_cast<BaseOptions*>(base_options_handle));
   }
-
-  jclass java_options_class = env->FindClass(
-      "org/tensorflow/lite/task/vision/embedder/"
-      "ImageEmbedder$ImageEmbedderOptions");
-
-  jmethodID l2_normalize_id =
-      env->GetMethodID(java_options_class, "getL2Normalize", "()Z");
-  jint l2_normalize = env->CallBooleanMethod(java_options, l2_normalize_id);
   proto_options.set_l2_normalize(l2_normalize);
-
-  jmethodID quantization_id =
-      env->GetMethodID(java_options_class, "getQuantize", "()Z");
-  jint quantization = env->CallBooleanMethod(java_options, quantization_id);
-  proto_options.set_quantize(quantization);
+  proto_options.set_quantize(quantize);
 
   return proto_options;
+}
+
+jlong CreateImageEmbedderFromOptions(JNIEnv* env,
+                                     const ImageEmbedderOptions& options) {
+  StatusOr<std::unique_ptr<ImageEmbedder>> image_embedder_or =
+      ImageEmbedder::CreateFromOptions(options,
+                                       tflite::task::CreateOpResolver());
+  if (image_embedder_or.ok()) {
+    return reinterpret_cast<jlong>(image_embedder_or->release());
+  } else {
+    ThrowException(
+        env,
+        GetExceptionClassNameForStatusCode(image_embedder_or.status().code()),
+        "Error occurred when initializing ImageEmbedder: %s",
+        image_embedder_or.status().message().data());
+    return kInvalidPointer;
+  }
 }
 
 jobject ConvertToEmbedResults(JNIEnv* env, const EmbeddingResult& results) {
@@ -96,7 +101,6 @@ jobject ConvertToEmbedResults(JNIEnv* env, const EmbeddingResult& results) {
       env->GetStaticMethodID(feature_vector_class, "create",
                              "([FB)Lorg/tensorflow/lite/task/processor/FeatureVector;");
 
-  
   return ConvertVectorToArrayList(
       env, results.embeddings().begin(), results.embeddings().end(),
       [env, embedding_class, embedding_create, feature_vector_class,
@@ -128,23 +132,6 @@ jobject ConvertToEmbedResults(JNIEnv* env, const EmbeddingResult& results) {
       });
 }
 
-jlong CreateImageEmbedderFromOptions(JNIEnv* env,
-                                     const ImageEmbedderOptions& options) {
-  StatusOr<std::unique_ptr<ImageEmbedder>> image_embedder_or =
-      ImageEmbedder::CreateFromOptions(options,
-                                       tflite::task::CreateOpResolver());
-  if (image_embedder_or.ok()) {
-    return reinterpret_cast<jlong>(image_embedder_or->release());
-  } else {
-    ThrowException(
-        env,
-        GetExceptionClassNameForStatusCode(image_embedder_or.status().code()),
-        "Error occurred when initializing ImagEmbedder: %s",
-        image_embedder_or.status().message().data());
-    return kInvalidPointer;
-  }
-}
-
 }  // namespace
 
 extern "C" JNIEXPORT void JNICALL
@@ -158,20 +145,20 @@ Java_org_tensorflow_lite_task_vision_embedder_ImageEmbedder_deinitJni(
 // values will be ignored.
 extern "C" JNIEXPORT jlong JNICALL
 Java_org_tensorflow_lite_task_vision_embedder_ImageEmbedder_initJniWithModelFdAndOptions(
-    JNIEnv* env, jclass thiz, jint file_descriptor,
-    jlong file_descriptor_length, jlong file_descriptor_offset,
-    jobject java_options, jlong base_options_handle) {
+    JNIEnv* env, jclass thiz, jint model_descriptor,
+    jlong model_descriptor_length, jlong model_descriptor_offset,
+    jlong base_options_handle, bool l2_normalize, bool quantize) {
   ImageEmbedderOptions proto_options =
-      ConvertToProtoOptions(env, java_options, base_options_handle);
+      ConvertToProtoOptions(base_options_handle, l2_normalize, quantize);
   auto file_descriptor_meta = proto_options.mutable_base_options()
                                   ->mutable_model_file()
                                   ->mutable_file_descriptor_meta();
-  file_descriptor_meta->set_fd(file_descriptor);
-  if (file_descriptor_length > 0) {
-    file_descriptor_meta->set_length(file_descriptor_length);
+  file_descriptor_meta->set_fd(model_descriptor);
+  if (model_descriptor_length > 0) {
+    file_descriptor_meta->set_length(model_descriptor_length);
   }
-  if (file_descriptor_offset > 0) {
-    file_descriptor_meta->set_offset(file_descriptor_offset);
+  if (model_descriptor_offset > 0) {
+    file_descriptor_meta->set_offset(model_descriptor_offset);
   }
 
   return CreateImageEmbedderFromOptions(env, proto_options);
@@ -179,10 +166,10 @@ Java_org_tensorflow_lite_task_vision_embedder_ImageEmbedder_initJniWithModelFdAn
 
 extern "C" JNIEXPORT jlong JNICALL
 Java_org_tensorflow_lite_task_vision_embedder_ImageEmbedder_initJniWithByteBuffer(
-    JNIEnv* env, jclass thiz, jobject model_buffer, jobject java_options,
-    jlong base_options_handle) {
+    JNIEnv* env, jclass thiz, jobject model_buffer, jlong base_options_handle,
+    bool l2_normalize, bool quantize) {
   ImageEmbedderOptions proto_options =
-      ConvertToProtoOptions(env, java_options, base_options_handle);
+      ConvertToProtoOptions(base_options_handle, l2_normalize, quantize);
   proto_options.mutable_base_options()->mutable_model_file()->set_file_content(
       static_cast<char*>(env->GetDirectBufferAddress(model_buffer)),
       static_cast<size_t>(env->GetDirectBufferCapacity(model_buffer)));
@@ -191,7 +178,7 @@ Java_org_tensorflow_lite_task_vision_embedder_ImageEmbedder_initJniWithByteBuffe
 }
 
 extern "C" JNIEXPORT jobject JNICALL
-Java_org_tensorflow_lite_task_vision_embedder_ImageEmbedder_embedNative(
+Java_org_tensorflow_lite_task_vision_embedder_ImageEmbedder_searchNative(
     JNIEnv* env, jclass thiz, jlong native_handle, jlong frame_buffer_handle,
     jintArray jroi) {
   auto* embedder = reinterpret_cast<ImageEmbedder*>(native_handle);
@@ -213,7 +200,7 @@ Java_org_tensorflow_lite_task_vision_embedder_ImageEmbedder_embedNative(
   } else {
     ThrowException(
         env, GetExceptionClassNameForStatusCode(results_or.status().code()),
-        "Error occurred when embedding the image: %s",
+        "Error occurred when embeddings the image: %s",
         results_or.status().message().data());
     return nullptr;
   }

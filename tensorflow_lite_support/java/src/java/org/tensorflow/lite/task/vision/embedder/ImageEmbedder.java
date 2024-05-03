@@ -37,8 +37,6 @@ import org.tensorflow.lite.task.processor.Embedding;
 import org.tensorflow.lite.task.processor.EmbedderOptions;
 import org.tensorflow.lite.task.vision.core.BaseVisionTaskApi;
 import org.tensorflow.lite.task.vision.core.BaseVisionTaskApi.InferenceProvider;
-import org.tensorflow.lite.task.core.TaskJniUtils.FdAndOptionsHandleProvider;
-import org.tensorflow.lite.task.core.annotations.UsedByReflection;
 
 /**
  * Performs embedding on images.
@@ -75,86 +73,30 @@ public final class ImageEmbedder extends BaseVisionTaskApi {
   private static final int OPTIONAL_FD_OFFSET = -1;
 
   /**
-   * Creates an {@link ImageEmbedder} instance from the default {@link ImageEmbedderOptions}.
-   *
-   * @param modelPath path to the embed model with metadata in the assets
-   * @throws IOException if an I/O error occurs when loading the tflite model
-   * @throws IllegalArgumentException if an argument is invalid
-   * @throws IllegalStateException if there is an internal error
-   * @throws RuntimeException if there is an otherwise unspecified error
-   */
-  public static ImageEmbedder createFromFile(Context context, String modelPath)
-      throws IOException {
-    return createFromFileAndOptions(context, modelPath, ImageEmbedderOptions.builder().build());
-  }
-
-  /**
-   * Creates an {@link ImageEmbedder} instance from the default {@link ImageEmbedderOptions}.
-   *
-   * @param modelFile the embed model {@link File} instance
-   * @throws IOException if an I/O error occurs when loading the tflite model
-   * @throws IllegalArgumentException if an argument is invalid
-   * @throws IllegalStateException if there is an internal error
-   * @throws RuntimeException if there is an otherwise unspecified error
-   */
-  public static ImageEmbedder createFromFile(File modelPath) throws IOException {
-    return createFromFileAndOptions(modelPath, ImageEmbedderOptions.builder().build());
-  }
-
-  /**
-   * Creates an {@link ImageEmbedder} instance with a model buffer and the default {@link
-   * ImageEmbedderOptions}.
-   *
-   * @param modelBuffer a direct {@link ByteBuffer} or a {@link MappedByteBuffer} of the embed
-   *     model
-   * @throws IllegalArgumentException if the model buffer is not a direct {@link ByteBuffer} or a
-   *     {@link MappedByteBuffer} * @throws IllegalStateException if there is an internal error
-   * @throws RuntimeException if there is an otherwise unspecified error
-   */
-  public static ImageEmbedder createFromBuffer(final ByteBuffer modelBuffer) {
-    return createFromBufferAndOptions(modelBuffer, ImageEmbedderOptions.builder().build());
-  }
-
-  /**
    * Creates an {@link ImageEmbedder} instance from {@link ImageEmbedderOptions}.
    *
-   * @param modelPath path to the embed model with metadata in the assets
-   * @throws IOException if an I/O error occurs when loading the tflite model
+   * @param modelPath path of the embed model with metadata in the assets
+   * @throws IOException if an I/O error occurs when loading the tflite model or the index file
    * @throws IllegalArgumentException if an argument is invalid
    * @throws IllegalStateException if there is an internal error
    * @throws RuntimeException if there is an otherwise unspecified error
    */
   public static ImageEmbedder createFromFileAndOptions(
-      Context context, String modelPath, ImageEmbedderOptions options) throws IOException {
-    return new ImageEmbedder(
-        TaskJniUtils.createHandleFromFdAndOptions(
-            context,
-            new FdAndOptionsHandleProvider<ImageEmbedderOptions>() {
-              @Override
-              public long createHandle(
-                  int fileDescriptor,
-                  long fileDescriptorLength,
-                  long fileDescriptorOffset,
-                  ImageEmbedderOptions options) {
-                return initJniWithModelFdAndOptions(
-                    fileDescriptor,
-                    fileDescriptorLength,
-                    fileDescriptorOffset,
-                    options,
-                    TaskJniUtils.createProtoBaseOptionsHandleWithLegacyNumThreads(
-                        options.getBaseOptions(), options.getNumThreads()));
-              }
-            },
-            IMAGE_EMBEDDER_NATIVE_LIB,
-            modelPath,
-            options));
+      Context context, String modelPath, final ImageEmbedderOptions options) throws IOException {
+    try (AssetFileDescriptor assetFileDescriptor = context.getAssets().openFd(modelPath)) {
+      return createFromModelFdAndOptions(
+          /*modelDescriptor=*/ assetFileDescriptor.getParcelFileDescriptor().getFd(),
+          /*modelDescriptorLength=*/ assetFileDescriptor.getLength(),
+          /*modelDescriptorOffset=*/ assetFileDescriptor.getStartOffset(),
+          options);
+    }
   }
 
   /**
-   * Creates an {@link ImageEmbedder} instance from {@link ImageEmbedderOptions}.
+   * Creates an {@link ImageEmbedder} instance.
    *
    * @param modelFile the embed model {@link File} instance
-   * @throws IOException if an I/O error occurs when loading the tflite model
+   * @throws IOException if an I/O error occurs when loading the tflite model or the index file
    * @throws IllegalArgumentException if an argument is invalid
    * @throws IllegalStateException if there is an internal error
    * @throws RuntimeException if there is an otherwise unspecified error
@@ -163,41 +105,36 @@ public final class ImageEmbedder extends BaseVisionTaskApi {
       File modelFile, final ImageEmbedderOptions options) throws IOException {
     try (ParcelFileDescriptor descriptor =
         ParcelFileDescriptor.open(modelFile, ParcelFileDescriptor.MODE_READ_ONLY)) {
-      return new ImageEmbedder(
-          TaskJniUtils.createHandleFromLibrary(
-              new TaskJniUtils.EmptyHandleProvider() {
-                @Override
-                public long createHandle() {
-                  return initJniWithModelFdAndOptions(
-                      descriptor.getFd(),
-                      /*fileDescriptorLength=*/ OPTIONAL_FD_LENGTH,
-                      /*fileDescriptorOffset=*/ OPTIONAL_FD_OFFSET,
-                      options,
-                      TaskJniUtils.createProtoBaseOptionsHandleWithLegacyNumThreads(
-                          options.getBaseOptions(), options.getNumThreads()));
-                }
-              },
-              IMAGE_EMBEDDER_NATIVE_LIB));
+      return createFromModelFdAndOptions(
+          /*modelDescriptor=*/ descriptor.getFd(),
+          /*modelDescriptorLength=*/ OPTIONAL_FD_LENGTH,
+          /*modelDescriptorOffset=*/ OPTIONAL_FD_OFFSET,
+          options);
     }
   }
 
   /**
-   * Creates an {@link ImageEmbedder} instance with a model buffer and {@link
-   * ImageEmbedderOptions}.
+   * Creates an {@link ImageEmbedder} instance with a model buffer and {@link ImageEmbedderOptions}.
    *
    * @param modelBuffer a direct {@link ByteBuffer} or a {@link MappedByteBuffer} of the embed
    *     model
    * @throws IllegalArgumentException if the model buffer is not a direct {@link ByteBuffer} or a
    *     {@link MappedByteBuffer}
+   * @throws IOException if an I/O error occurs when loading the index file
    * @throws IllegalStateException if there is an internal error
    * @throws RuntimeException if there is an otherwise unspecified error
    */
   public static ImageEmbedder createFromBufferAndOptions(
-      final ByteBuffer modelBuffer, final ImageEmbedderOptions options) {
+      final ByteBuffer modelBuffer, final ImageEmbedderOptions options) throws IOException {
     if (!(modelBuffer.isDirect() || modelBuffer instanceof MappedByteBuffer)) {
       throw new IllegalArgumentException(
           "The model buffer should be either a direct ByteBuffer or a MappedByteBuffer.");
     }
+    return createFromBufferAndOptionsImpl(modelBuffer, options, /*indexFd=*/ 0);
+  }
+
+  public static ImageEmbedder createFromBufferAndOptionsImpl(
+      final ByteBuffer modelBuffer, final ImageEmbedderOptions options, final int indexFd) {
     return new ImageEmbedder(
         TaskJniUtils.createHandleFromLibrary(
             new EmptyHandleProvider() {
@@ -205,9 +142,9 @@ public final class ImageEmbedder extends BaseVisionTaskApi {
               public long createHandle() {
                 return initJniWithByteBuffer(
                     modelBuffer,
-                    options,
-                    TaskJniUtils.createProtoBaseOptionsHandleWithLegacyNumThreads(
-                        options.getBaseOptions(), options.getNumThreads()));
+                    TaskJniUtils.createProtoBaseOptionsHandle(options.getBaseOptions()),
+                    options.getEmbedderOptions().getL2Normalize(),
+                    options.getEmbedderOptions().getQuantize());
               }
             },
             IMAGE_EMBEDDER_NATIVE_LIB));
@@ -223,100 +160,34 @@ public final class ImageEmbedder extends BaseVisionTaskApi {
   }
 
   /** Options for setting up an ImageEmbedder. */
-  @UsedByReflection("image_embedder_jni.cc")
-  public static class ImageEmbedderOptions {
-    private final BaseOptions baseOptions;
-    private final boolean l2Normalize;
-    private final boolean quantize;
-    private final int numThreads;
+  @AutoValue
+  public abstract static class ImageEmbedderOptions {
+
+    abstract BaseOptions getBaseOptions();
+
+    abstract EmbedderOptions getEmbedderOptions();
 
     public static Builder builder() {
-      return new Builder();
+      return new AutoValue_ImageEmbedder_ImageEmbedderOptions.Builder()
+          .setBaseOptions(BaseOptions.builder().build())
+          .setEmbedderOptions(EmbedderOptions.builder().build());
     }
 
-    /** A builder that helps to configure an instance of ObjectDetectorOptions. */
-    public static class Builder {
-      private BaseOptions baseOptions = BaseOptions.builder().build();
-      private boolean l2Normalize = true;
-      private boolean quantize = false;
-      private int numThreads = -1;
-
-      private Builder() {}
-
+    /** Builder for {@link ImageEmbedderOptions}. */
+    @AutoValue.Builder
+    public abstract static class Builder {
       /** Sets the general options to configure Task APIs, such as accelerators. */
-      public Builder setBaseOptions(BaseOptions baseOptions) {
-        this.baseOptions = baseOptions;
-        return this;
-      }
+      public abstract Builder setBaseOptions(BaseOptions baseOptions);
 
-      /**
-       * Sets the l2 normalization that overrides the one provided in the model metadata (if any).
-       * Results below this value are rejected.
-       */
-      public Builder setL2Normalize(boolean l2Normalize) {
-        this.l2Normalize = l2Normalize;
-        return this;
-      }
+      /** Sets the options to configure Embedder API. */
+      public abstract Builder setEmbedderOptions(EmbedderOptions EmbedderOptions);
 
-      /**
-       * Sets the quantization that overrides the one provided in the model metadata (if any).
-       * Results below this value are rejected.
-       */
-      public Builder setQuantize(boolean quantize) {
-        this.quantize = quantize;
-        return this;
-      }
-
-      /**
-       * Sets the number of threads to be used for TFLite ops that support multi-threading when
-       * running inference with CPU. Defaults to -1.
-       *
-       * <p>numThreads should be greater than 0 or equal to -1. Setting numThreads to -1 has the
-       * effect to let TFLite runtime set the value.
-       *
-       * @deprecated use {@link BaseOptions} to configure number of threads instead. This method
-       *     will override the number of threads configured from {@link BaseOptions}.
-       */
-      @Deprecated
-      public Builder setNumThreads(int numThreads) {
-        this.numThreads = numThreads;
-        return this;
-      }
-
-      public ImageEmbedderOptions build() {
-        return new ImageEmbedderOptions(this);
-      }
-    }
-
-    @UsedByReflection("image_embedder_jni.cc")
-    public boolean getL2Normalize() {
-      return l2Normalize;
-    }
-
-    @UsedByReflection("image_embedder_jni.cc")
-    public boolean getQuantize() {
-      return quantize;
-    }
-
-    @UsedByReflection("image_embedder_jni.cc")
-    public int getNumThreads() {
-      return numThreads;
-    }
-
-    public BaseOptions getBaseOptions() {
-      return baseOptions;
-    }
-
-    private ImageEmbedderOptions(Builder builder) {
-      l2Normalize = builder.l2Normalize;
-      quantize = builder.quantize;
-      numThreads = builder.numThreads;
-      baseOptions = builder.baseOptions;
+      public abstract ImageEmbedderOptions build();
     }
   }
 
   /**
-   * Performs embedding extraction on the provided {@link TensorImage}
+   * Performs embedding extraction on the provided {@link TensorImage}.
    *
    * <p>{@link ImageEmbedder} supports the following {@link TensorImage} color space types:
    *
@@ -337,7 +208,7 @@ public final class ImageEmbedder extends BaseVisionTaskApi {
 
   /**
    * Performs embedding extraction on the provided {@link TensorImage} with {@link
-   * ImageProcessingOptions}.
+   * ImageProcessingOptions}
    *
    * <p>{@link ImageEmbedder} supports the following options:
    *
@@ -420,15 +291,53 @@ public final class ImageEmbedder extends BaseVisionTaskApi {
         new int[] {roi.left, roi.top, roi.width(), roi.height()});
   }
 
+  private static ImageEmbedder createFromModelFdAndOptions(
+      final int modelDescriptor,
+      final long modelDescriptorLength,
+      final long modelDescriptorOffset,
+      final ImageEmbedderOptions options)
+      throws IOException {
+    return createFromModelFdAndOptionsImpl(
+          modelDescriptor, modelDescriptorLength, modelDescriptorOffset, options, /*indexFd=*/ 0);
+  }
+
+  private static ImageEmbedder createFromModelFdAndOptionsImpl(
+      final int modelDescriptor,
+      final long modelDescriptorLength,
+      final long modelDescriptorOffset,
+      final ImageEmbedderOptions options,
+      final int indexFd) {
+    long nativeHandle =
+        TaskJniUtils.createHandleFromLibrary(
+            new EmptyHandleProvider() {
+              @Override
+              public long createHandle() {
+                return initJniWithModelFdAndOptions(
+                    modelDescriptor,
+                    modelDescriptorLength,
+                    modelDescriptorOffset,
+                    TaskJniUtils.createProtoBaseOptionsHandle(options.getBaseOptions()),
+                    options.getEmbedderOptions().getL2Normalize(),
+                    options.getEmbedderOptions().getQuantize());
+              }
+            },
+            IMAGE_EMBEDDER_NATIVE_LIB);
+    return new ImageEmbedder(nativeHandle);
+  }
+
   private static native long initJniWithModelFdAndOptions(
-      int fileDescriptor,
-      long fileDescriptorLength,
-      long fileDescriptorOffset,
-      ImageEmbedderOptions options,
-      long baseOptionsHandle);
+      int modelDescriptor,
+      long modelDescriptorLength,
+      long modelDescriptorOffset,
+      long baseOptionsHandle,
+      boolean l2Normalize,
+      boolean quantize);
 
   private static native long initJniWithByteBuffer(
-      ByteBuffer modelBuffer, ImageEmbedderOptions options, long baseOptionsHandle);
+      ByteBuffer modelBuffer,
+      long baseOptionsHandle,
+      boolean l2Normalize,
+      boolean quantize);
 
   /**
    * The native method to embed an image based on the ROI specified.
