@@ -25,6 +25,7 @@ import java.io.File;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.MappedByteBuffer;
+import java.util.ArrayList;
 import java.util.List;
 import org.tensorflow.lite.support.image.MlImageAdapter;
 import org.tensorflow.lite.support.image.TensorImage;
@@ -234,7 +235,7 @@ public final class ImageEmbedder extends BaseVisionTaskApi {
       return new Builder();
     }
 
-    /** A builder that helps to configure an instance of ObjectDetectorOptions. */
+    /** A builder that helps to configure an instance of ImageEmbedderOptions. */
     public static class Builder {
       private BaseOptions baseOptions = BaseOptions.builder().build();
       private boolean l2Normalize = true;

@@ -44,9 +44,9 @@ using ::tflite::support::utils::GetExceptionClassNameForStatusCode;
 using ::tflite::support::utils::kInvalidPointer;
 using ::tflite::support::utils::ThrowException;
 using ::tflite::task::core::BaseOptions;
-using ::tflite::task::processor::FeatureVector;
-using ::tflite::task::processor::Embedding;
-using ::tflite::task::processor::EmbeddingResult;
+using ::tflite::task::vision::FeatureVector;
+using ::tflite::task::vision::Embedding;
+using ::tflite::task::vision::EmbeddingResult;
 using ::tflite::task::vision::BoundingBox;
 using ::tflite::task::vision::FrameBuffer;
 using ::tflite::task::vision::ImageEmbedder;
@@ -86,7 +86,7 @@ jobject ConvertToEmbedResults(JNIEnv* env, const EmbeddingResult& results) {
       env->FindClass("org/tensorflow/lite/task/processor/Embedding");
   jmethodID embedding_create =
       env->GetStaticMethodID(embedding_class, "create",
-                             "([Lorg/tensorflow/lite/task/processor/FeatureVector;I)"
+                             "(Lorg/tensorflow/lite/task/processor/FeatureVector;I)"
                              "Lorg/tensorflow/lite/task/processor/Embedding;");
 
   // jclass and factory create of FeatureVector.
@@ -139,7 +139,7 @@ jlong CreateImageEmbedderFromOptions(JNIEnv* env,
     ThrowException(
         env,
         GetExceptionClassNameForStatusCode(image_embedder_or.status().code()),
-        "Error occurred when initializing ImagEmbedder: %s",
+        "Error occurred when initializing ImageEmbedder: %s",
         image_embedder_or.status().message().data());
     return kInvalidPointer;
   }
